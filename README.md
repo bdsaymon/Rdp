@@ -1,67 +1,57 @@
-name: Setup ngrok and Remote Desktop
+name: Setup RDP with Ngrok (Windows 11)
 
 on:
   workflow_dispatch:
 
 jobs:
-  setup-ngrok:
+  build:
     runs-on: windows-latest
     timeout-minutes: 360
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+    - name: Checkout Repository
+      uses: actions/checkout@v3
 
-      - name: Download ngrok (latest)
-        run: |
-          Invoke-WebRequest https://ngrok-agent.s3.amazonaws.com/ngrok-windows-amd64.zip -OutFile ngrok.zip
-          Expand-Archive ngrok.zip -DestinationPath .
-          if (!(Test-Path .\ngrok.exe)) { throw "Failed to extract ngrok." }
+    - name: Download ngrok
+      run: |
+        Invoke-WebRequest https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-windows-amd64.zip -OutFile ngrok.zip
+        Expand-Archive ngrok.zip -DestinationPath .
+        if (!(Test-Path .\ngrok.exe)) { throw "Ngrok download failed!" }
 
-      - name: Authenticate ngrok
-        run: .\ngrok.exe authtoken $Env:NGROK_AUTH_TOKEN
-        env:
-          NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+    - name: Authenticate ngrok
+      run: .\ngrok.exe authtoken $env:NGROK_AUTH_TOKEN
+      env:
+        NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
 
-      - name: Enable Remote Desktop
-        run: |
-          Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
-          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-          Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "UserAuthentication" -Value 1
+    - name: Enable Remote Desktop
+      run: |
+        Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
+        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+        Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "UserAuthentication" -Value 1
 
-      - name: Set Password for runneradmin
-        run: |
-          $user = Get-LocalUser -Name "runneradmin"
-          if ($user.Enabled -eq $false) { Enable-LocalUser -Name "runneradmin" }
-          $secPass = ConvertTo-SecureString "P@ssw0rd!" -AsPlainText -Force
-          Set-LocalUser -Name "runneradmin" -Password $secPass
+    - name: Set RDP User Password
+      run: |
+        $user = "rdpuser"
+        $pass = ConvertTo-SecureString "Password123!" -AsPlainText -Force
+        New-LocalUser $user -Password $pass
+        Add-LocalGroupMember -Group "Administrators" -Member $user
 
-      - name: Start ngrok TCP tunnel (RDP port)
-        run: |
-          Start-Process -FilePath .\ngrok.exe -ArgumentList "tcp 3389" -RedirectStandardOutput ngrok.log -WindowStyle Hidden
-          Start-Sleep -Seconds 10
-          Get-Content ngrok.log -ErrorAction SilentlyContinue
+    - name: Start ngrok tunnel (RDP)
+      run: Start-Process -FilePath ".\ngrok.exe" -ArgumentList "tcp 3389"
 
-      - name: Display connection info
-        run: |
-          $apiUrl = "http://127.0.0.1:4040/api/tunnels"
-          try {
-            $response = Invoke-RestMethod -Uri $apiUrl
-            $tcpAddr = ($response.tunnels | Where-Object { $_.proto -eq "tcp" }).public_url
-            if ($tcpAddr) {
-              Write-Output "✅ Connect using: $tcpAddr"
-            } else {
-              Write-Output "⚠️ Unable to fetch tunnel info yet."
-            }
-          } catch {
-            Write-Output "⚠️ Ngrok API not responding."
-          }
+    - name: Wait for tunnel and show address
+      shell: pwsh
+      run: |
+        Start-Sleep -Seconds 15
+        $tunnel = Invoke-RestMethod -Uri http://127.0.0.1:4040/api/tunnels
+        $addr = $tunnel.tunnels[0].public_url
+        Write-Output "✅ RDP Address (copy this): $addr"
+        Write-Output "👉 Username: rdpuser"
+        Write-Output "👉 Password: Password123!"
 
-      - name: Keep Alive (6 hours)
-        run: |
-          for ($i = 0; $i -lt 72; $i++) {
-            Write-Host "⏳ Still alive... Minute: $($i * 5)"
-            Start-Sleep -Seconds 300
-          }
-        continue-on-error: true
-        
+    - name: Keep alive (6 hours)
+      run: |
+        for ($i = 0; $i -lt 360; $i++) {
+          Write-Output "RDP still running... Minute: $($i*1)"
+          Start-Sleep -Seconds 60
+        }
